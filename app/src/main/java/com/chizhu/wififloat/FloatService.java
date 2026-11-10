@@ -46,7 +46,8 @@ public class FloatService extends Service {
                 case MotionEvent.ACTION_UP: if(!moved){if(System.currentTimeMillis()-downTime>850)stopSelf();else toggleWifi();}return true;
             } return true; }
         });
-        wm.addView(bubble,params);\n        try { Shizuku.bindUserService(serviceArgs, connection); } catch(Throwable e) { toast("Shizuku 서비스 연결 실패: "+e.getMessage()); }
+        wm.addView(bubble,params);
+        try { Shizuku.bindUserService(serviceArgs, connection); } catch(Throwable e) { toast("Shizuku 서비스 연결 실패: "+e.getMessage()); }
     }
     private void toggleWifi(){
         if(busy)return;
