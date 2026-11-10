@@ -1,6 +1,6 @@
 plugins { id 'com.android.application' }
 android {
-    namespace 'com.chizhu.wififloat'
+    namespace 'com.chizhu.wififloat'\n    buildFeatures { aidl true }
     compileSdk 35
     defaultConfig {
         applicationId 'com.chizhu.wififloat'
@@ -12,5 +12,5 @@ android {
 }
 dependencies {
     implementation 'dev.rikka.shizuku:api:13.1.5'
-    implementation 'dev.rikka.shizuku:provider:13.1.5'
+    implementation 'dev.rikka.shizuku:provider:13.1.5'\n    implementation 'androidx.annotation:annotation:1.8.2'
 }
