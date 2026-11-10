@@ -16,12 +16,22 @@ public class FloatService extends Service {
     private WindowManager wm; private TextView bubble; private WindowManager.LayoutParams params;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private volatile boolean busy = false;
+    private IWifiControl remote;
+    private final Shizuku.UserServiceArgs serviceArgs = new Shizuku.UserServiceArgs(
+        new android.content.ComponentName("com.chizhu.wififloat", WifiUserService.class.getName()))
+        .daemon(false).processNameSuffix("wifi").debuggable(false).version(1);
+    private final android.content.ServiceConnection connection = new android.content.ServiceConnection() {
+        @Override public void onServiceConnected(android.content.ComponentName name, android.os.IBinder binder) {
+            remote = IWifiControl.Stub.asInterface(binder);
+        }
+        @Override public void onServiceDisconnected(android.content.ComponentName name) { remote = null; }
+    };
     @Override public void onCreate() {
         super.onCreate();
         NotificationManager nm=getSystemService(NotificationManager.class);
         nm.createNotificationChannel(new NotificationChannel("float","Wi-Fi 플로팅",NotificationManager.IMPORTANCE_LOW));
         Notification notification=new Notification.Builder(this,"float").setContentTitle("WiFi Float 실행 중").setContentText("길게 눌러 버튼 종료")
-            .setSmallIcon(android.R.drawable.stat_sys_wifi).setContentIntent(PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_IMMUTABLE)).build();
+            .setSmallIcon(android.R.drawable.stat_notify_sync).setContentIntent(PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_IMMUTABLE)).build();
         startForeground(1,notification);
         wm=(WindowManager)getSystemService(WINDOW_SERVICE);
         bubble=new TextView(this); bubble.setText("Wi-Fi"); bubble.setTextColor(Color.WHITE); bubble.setTextSize(15); bubble.setGravity(Gravity.CENTER);
@@ -36,7 +46,7 @@ public class FloatService extends Service {
                 case MotionEvent.ACTION_UP: if(!moved){if(System.currentTimeMillis()-downTime>850)stopSelf();else toggleWifi();}return true;
             } return true; }
         });
-        wm.addView(bubble,params);
+        wm.addView(bubble,params);\n        try { Shizuku.bindUserService(serviceArgs, connection); } catch(Throwable e) { toast("Shizuku 서비스 연결 실패: "+e.getMessage()); }
     }
     private void toggleWifi(){
         if(busy)return;
@@ -48,16 +58,16 @@ public class FloatService extends Service {
         new Thread(()->{
             String error=null;
             try {
-                Process p=Shizuku.newProcess(new String[]{"sh","-c",enable?"svc wifi enable":"svc wifi disable"},null,null);
-                int result=p.waitFor();
-                if(result!=0) { ByteArrayOutputStream out=new ByteArrayOutputStream(); byte[] buf=new byte[512]; int n; InputStream stream=p.getErrorStream(); while((n=stream.read(buf))!=-1 && out.size()<2048)out.write(buf,0,n); error="명령 실패 ("+result+") "+out.toString("UTF-8"); }
-                p.destroy();
+                IWifiControl control = remote;
+                if (control == null) throw new IllegalStateException("Shizuku 서비스 연결 중입니다. 잠시 후 다시 눌러주세요.");
+                int result = control.setWifiEnabled(enable);
+                if (result != 0) error = "Wi-Fi 명령 실패 (종료 코드 " + result + ")";
             } catch(Exception ex){error="실행 실패: "+ex.getMessage();}
             final String msg=error;
             handler.post(()->{busy=false;bubble.setText("Wi-Fi");if(msg!=null)toast(msg);else toast(enable?"Wi-Fi 켜기 요청 완료":"Wi-Fi 끄기 요청 완료");});
         }).start();
     }
     private void toast(String s){handler.post(()->Toast.makeText(this,s,Toast.LENGTH_LONG).show());}
-    @Override public void onDestroy(){if(bubble!=null&&wm!=null){wm.removeView(bubble);bubble=null;}super.onDestroy();}
+    @Override public void onDestroy(){if(bubble!=null&&wm!=null){wm.removeView(bubble);bubble=null;}try {Shizuku.unbindUserService(serviceArgs,connection,true);}catch(Throwable ignored){}super.onDestroy();}
     @Override public IBinder onBind(Intent intent){return null;}
 }
