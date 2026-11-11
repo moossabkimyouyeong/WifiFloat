@@ -1,74 +1,25 @@
 package com.chizhu.wififloat;
-
-import android.app.*;
-import android.content.*;
-import android.graphics.Color;
-import android.graphics.PixelFormat;
-import android.graphics.drawable.GradientDrawable;
-import android.net.wifi.WifiManager;
-import android.os.*;
-import android.view.*;
-import android.widget.*;
-import java.io.*;
-import rikka.shizuku.Shizuku;
-
+import android.app.*;import android.content.*;import android.graphics.*;import android.graphics.drawable.*;import android.net.wifi.WifiManager;import android.os.*;import android.view.*;import android.widget.*;import rikka.shizuku.Shizuku;
 public class FloatService extends Service {
-    private WindowManager wm; private TextView bubble; private WindowManager.LayoutParams params;
-    private final Handler handler = new Handler(Looper.getMainLooper());
-    private volatile boolean busy = false;
-    private IWifiControl remote;
-    private final Shizuku.UserServiceArgs serviceArgs = new Shizuku.UserServiceArgs(
-        new android.content.ComponentName("com.chizhu.wififloat", WifiUserService.class.getName()))
-        .daemon(false).processNameSuffix("wifi").debuggable(false).version(1);
-    private final android.content.ServiceConnection connection = new android.content.ServiceConnection() {
-        @Override public void onServiceConnected(android.content.ComponentName name, android.os.IBinder binder) {
-            remote = IWifiControl.Stub.asInterface(binder);
-        }
-        @Override public void onServiceDisconnected(android.content.ComponentName name) { remote = null; }
-    };
-    @Override public void onCreate() {
-        super.onCreate();
-        NotificationManager nm=getSystemService(NotificationManager.class);
-        nm.createNotificationChannel(new NotificationChannel("float","Wi-Fi 플로팅",NotificationManager.IMPORTANCE_LOW));
-        Notification notification=new Notification.Builder(this,"float").setContentTitle("WiFi Float 실행 중").setContentText("길게 눌러 버튼 종료")
-            .setSmallIcon(android.R.drawable.stat_notify_sync).setContentIntent(PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_IMMUTABLE)).build();
-        startForeground(1,notification);
-        wm=(WindowManager)getSystemService(WINDOW_SERVICE);
-        bubble=new TextView(this); bubble.setText("Wi-Fi"); bubble.setTextColor(Color.WHITE); bubble.setTextSize(15); bubble.setGravity(Gravity.CENTER);
-        GradientDrawable bg=new GradientDrawable(); bg.setColor(0xE51D70E8); bg.setCornerRadius(100); bubble.setBackground(bg); bubble.setElevation(12);
-        int size=(int)(64*getResources().getDisplayMetrics().density);
-        params=new WindowManager.LayoutParams(size,size,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,PixelFormat.TRANSLUCENT);
-        params.gravity=Gravity.TOP|Gravity.LEFT; params.x=20; params.y=250;
-        bubble.setOnTouchListener(new View.OnTouchListener(){ float downX,downY; int x,y; long downTime; boolean moved;
-            @Override public boolean onTouch(View v,android.view.MotionEvent e){ switch(e.getActionMasked()){
-                case MotionEvent.ACTION_DOWN: downX=e.getRawX();downY=e.getRawY();x=params.x;y=params.y;downTime=System.currentTimeMillis();moved=false;return true;
-                case MotionEvent.ACTION_MOVE: if(Math.abs(e.getRawX()-downX)>12||Math.abs(e.getRawY()-downY)>12)moved=true; if(moved){params.x=x+(int)(e.getRawX()-downX);params.y=y+(int)(e.getRawY()-downY);wm.updateViewLayout(bubble,params);}return true;
-                case MotionEvent.ACTION_UP: if(!moved){if(System.currentTimeMillis()-downTime>850)stopSelf();else toggleWifi();}return true;
-            } return true; }
-        });
-        wm.addView(bubble,params);
-        try { Shizuku.bindUserService(serviceArgs, connection); } catch(Throwable e) { toast("Shizuku 서비스 연결 실패: "+e.getMessage()); }
-    }
-    private void toggleWifi(){
-        if(busy)return;
-        if(!Shizuku.pingBinder()||Shizuku.checkSelfPermission()!=android.content.pm.PackageManager.PERMISSION_GRANTED){ toast("Shizuku 연결/권한을 확인해줘");return; }
-        WifiManager wifi=(WifiManager)getApplicationContext().getSystemService(WIFI_SERVICE);
-        boolean currentlyOn=wifi.isWifiEnabled();
-        boolean enable=!currentlyOn;
-        busy=true; bubble.setText("···");
-        new Thread(()->{
-            String error=null;
-            try {
-                IWifiControl control = remote;
-                if (control == null) throw new IllegalStateException("Shizuku 서비스 연결 중입니다. 잠시 후 다시 눌러주세요.");
-                int result = control.setWifiEnabled(enable);
-                if (result != 0) error = "Wi-Fi 명령 실패 (종료 코드 " + result + ")";
-            } catch(Exception ex){error="실행 실패: "+ex.getMessage();}
-            final String msg=error;
-            handler.post(()->{busy=false;bubble.setText("Wi-Fi");if(msg!=null)toast(msg);else toast(enable?"Wi-Fi 켜기 요청 완료":"Wi-Fi 끄기 요청 완료");});
-        }).start();
-    }
-    private void toast(String s){handler.post(()->Toast.makeText(this,s,Toast.LENGTH_LONG).show());}
-    @Override public void onDestroy(){if(bubble!=null&&wm!=null){wm.removeView(bubble);bubble=null;}try {Shizuku.unbindUserService(serviceArgs,connection,true);}catch(Throwable ignored){}super.onDestroy();}
-    @Override public IBinder onBind(Intent intent){return null;}
+ private WindowManager wm;private TextView bubble;private WindowManager.LayoutParams params;private View picker;private final Handler h=new Handler(Looper.getMainLooper());private boolean running=false;private int iterations=0;private Runnable task;private IWifiControl remote;
+ private final Shizuku.UserServiceArgs args=new Shizuku.UserServiceArgs(new ComponentName("com.chizhu.wififloat",WifiUserService.class.getName())).daemon(false).processNameSuffix("wifi").debuggable(false).version(1);
+ private final ServiceConnection connection=new ServiceConnection(){public void onServiceConnected(ComponentName n,IBinder b){remote=IWifiControl.Stub.asInterface(b);}public void onServiceDisconnected(ComponentName n){remote=null;}};
+ private android.content.SharedPreferences prefs(){return getSharedPreferences("macro",0);}
+ private void toast(String s){h.post(()->Toast.makeText(this,s,Toast.LENGTH_SHORT).show());}
+ @Override public void onCreate(){super.onCreate();NotificationManager nm=getSystemService(NotificationManager.class);nm.createNotificationChannel(new NotificationChannel("float","WiFi Float",NotificationManager.IMPORTANCE_LOW));startForeground(1,new Notification.Builder(this,"float").setContentTitle("WiFi Float 실행 중").setSmallIcon(android.R.drawable.stat_notify_sync).build());wm=(WindowManager)getSystemService(WINDOW_SERVICE);
+ bubble=new TextView(this);bubble.setText("WiFi");bubble.setTextColor(Color.WHITE);bubble.setGravity(Gravity.CENTER);bubble.setTextSize(12);GradientDrawable bg=new GradientDrawable();bg.setColor(0xFF2467DC);bg.setCornerRadius(100);bubble.setBackground(bg);bubble.setElevation(8);bubble.setAlpha(prefs().getInt("opacity",100)/100f);
+ int size=(int)(49*getResources().getDisplayMetrics().density);params=new WindowManager.LayoutParams(size,size,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,PixelFormat.TRANSLUCENT);params.gravity=Gravity.TOP|Gravity.LEFT;params.x=18;params.y=260;
+ bubble.setOnTouchListener(new View.OnTouchListener(){float sx,sy;int px,py;long down;boolean moved;public boolean onTouch(View v,MotionEvent e){switch(e.getActionMasked()){case MotionEvent.ACTION_DOWN:sx=e.getRawX();sy=e.getRawY();px=params.x;py=params.y;down=System.currentTimeMillis();moved=false;return true;case MotionEvent.ACTION_MOVE:if(Math.abs(e.getRawX()-sx)>12||Math.abs(e.getRawY()-sy)>12)moved=true;if(moved){params.x=px+(int)(e.getRawX()-sx);params.y=py+(int)(e.getRawY()-sy);wm.updateViewLayout(bubble,params);}return true;case MotionEvent.ACTION_UP:if(!moved){if(System.currentTimeMillis()-down>750)showMenu();else toggleWifi();}return true;}return true;}});
+ wm.addView(bubble,params);try{Shizuku.bindUserService(args,connection);}catch(Throwable e){toast("Shizuku 연결 실패");}
+ }
+ private void showMenu(){LinearLayout l=new LinearLayout(this);l.setOrientation(1);String[] options={"매크로 실행","매크로 중지","터치 위치 지정","설정 열기","플로팅 종료"};final PopupWindow pop=new PopupWindow(l,(int)(210*getResources().getDisplayMetrics().density),-2,true);for(int i=0;i<options.length;i++){final int n=i;Button b=new Button(this);b.setText(options[i]);b.setOnClickListener(v->{pop.dismiss();if(n==0)startMacro();else if(n==1)stopMacro();else if(n==2)pick();else if(n==3){Intent intent=new Intent(this,MainActivity.class);intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);startActivity(intent);}else stopSelf();});l.addView(b);}l.setBackgroundColor(Color.WHITE);pop.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.WHITE));pop.setOutsideTouchable(true);pop.setElevation(12);pop.showAtLocation(bubble,Gravity.CENTER,0,0);}
+ private void pick(){if(picker!=null)return;stopMacro();bubble.setVisibility(View.GONE);FrameLayout layer=new FrameLayout(this);layer.setBackgroundColor(0x44000000);TextView hint=new TextView(this);hint.setText("원하는 화면 위치를 터치하세요");hint.setTextColor(Color.WHITE);hint.setTextSize(20);hint.setGravity(Gravity.CENTER);hint.setBackgroundColor(0xCC182333);FrameLayout.LayoutParams hp=new FrameLayout.LayoutParams(-1,(int)(70*getResources().getDisplayMetrics().density),Gravity.TOP);layer.addView(hint,hp);
+ WindowManager.LayoutParams p=new WindowManager.LayoutParams(-1,-1,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,PixelFormat.TRANSLUCENT);p.gravity=Gravity.TOP|Gravity.LEFT;
+ layer.setOnTouchListener((v,e)->{if(e.getAction()==MotionEvent.ACTION_UP){prefs().edit().putInt("x",(int)e.getRawX()).putInt("y",(int)e.getRawY()).apply();wm.removeView(layer);picker=null;bubble.setVisibility(View.VISIBLE);toast("터치 위치 저장 완료");}return true;});picker=layer;wm.addView(layer,p);}
+ private void toggleWifi(){if(remote==null){toast("Shizuku 연결을 확인해줘");return;}new Thread(()->{try{WifiManager wifi=(WifiManager)getApplicationContext().getSystemService(WIFI_SERVICE);remote.setWifiEnabled(!wifi.isWifiEnabled());}catch(Exception e){toast("WiFi 명령 실패");}}).start();}
+ private void stopMacro(){running=false;if(task!=null)h.removeCallbacks(task);task=null;if(bubble!=null)bubble.setText("WiFi");}
+ private void startMacro(){stopMacro();boolean touch=prefs().getBoolean("touch",true),wifi=prefs().getBoolean("wifi",false);if(!touch&&!wifi){toast("매크로 동작을 선택해줘");return;}if(touch&&TouchService.active==null){toast("접근성에서 터치 서비스 활성화 필요");return;}if(wifi&&remote==null){toast("Shizuku 연결 필요");return;}running=true;iterations=0;bubble.setText("STOP");final Runnable[] loop=new Runnable[1];loop[0]=()->{if(!running)return;int repeat=prefs().getInt("repeat",10);if(repeat>0&&iterations>=repeat){stopMacro();return;}iterations++;if(touch&&TouchService.active!=null)TouchService.active.tap(prefs().getInt("x",500),prefs().getInt("y",900));if(wifi)toggleWifi();task=loop[0];h.postDelayed(task,Math.max(150,prefs().getInt("delay",1000)));};loop[0].run();}
+ @Override public int onStartCommand(Intent i,int flags,int id){if(i!=null){String a=i.getAction();if("PICK".equals(a))h.postDelayed(this::pick,500);else if("START".equals(a))startMacro();else if("STOP".equals(a))stopMacro();}if(bubble!=null)bubble.setAlpha(prefs().getInt("opacity",100)/100f);return START_STICKY;}
+ @Override public void onDestroy(){stopMacro();if(picker!=null)wm.removeView(picker);if(bubble!=null)wm.removeView(bubble);try{Shizuku.unbindUserService(args,connection,true);}catch(Throwable e){}super.onDestroy();}
+ @Override public IBinder onBind(Intent i){return null;}
 }
